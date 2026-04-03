@@ -377,7 +377,6 @@ jobs:
           """
           with open("runtime.asm", "w") as f: f.write(asm)
           
-          # Runtime Assembly DDC
           subprocess.run(["nasm", "-f", "bin", "runtime.asm", "-o", "runtime_n.bin"], check=True)
           subprocess.run(["yasm", "-f", "bin", "runtime.asm", "-o", "runtime_y.bin"], check=True)
           with open("runtime_n.bin", "rb") as f1, open("runtime_y.bin", "rb") as f2:
@@ -436,12 +435,12 @@ jobs:
               prog = sys.argv[3]; inp = sys.argv[4]
               shutil.copy(prog, "tmp_prog.img")
               shutil.copy(inp, "tmp_inp.img")
-              cmd = ["qemu-system-x86_64", "-drive", "format=raw,file=seed.img,index=0,if=ide,readonly=on", "-drive", "format=raw,file=tmp_prog.img,index=1,if=ide,readonly=on", "-drive", "format=raw,file=tmp_inp.img,index=2,if=ide,readonly=on", "-display", "none", "-monitor", "stdio"]
+              cmd = ["qemu-system-x86_64", "-drive", "format=raw,file=seed.img,index=0,if=ide", "-drive", "format=raw,file=tmp_prog.img,index=1,if=ide", "-drive", "format=raw,file=tmp_inp.img,index=2,if=ide", "-display", "none", "-monitor", "stdio"]
           else:
               boot = sys.argv[3]; inp = sys.argv[4]
               shutil.copy(boot, "tmp_boot.img")
               shutil.copy(inp, "tmp_inp.img")
-              cmd = ["qemu-system-x86_64", "-drive", "format=raw,file=tmp_boot.img,index=0,if=ide,readonly=on", "-drive", "format=raw,file=tmp_inp.img,index=1,if=ide,readonly=on", "-display", "none", "-monitor", "stdio"]
+              cmd = ["qemu-system-x86_64", "-drive", "format=raw,file=tmp_boot.img,index=0,if=ide", "-drive", "format=raw,file=tmp_inp.img,index=1,if=ide", "-display", "none", "-monitor", "stdio"]
           p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL)
           time.sleep(5)
           p.stdin.write(b"pmemsave 0x30000 65536 memdump.bin\nquit\n")
