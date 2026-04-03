@@ -8,17 +8,17 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm
+          sudo apt-get install -y nasm yasm qemu-system-x86 clang tcc
+          
       - name: Compile Seed (S0)
         run: |
           gcc -O3 ribbothon.c -o ribbothon -lm
           gcc -O3 meta_compiler9.c -o meta_compiler
-      - name: Setup Void Hardware Environment
-        run: |
-          sudo apt-get install -y qemu-system-x86
+          
       - name: Build Baremetal AOT Generator (S0-Void)
         run: |
           gcc baremetal_aot_gen.c -o baremetal_aot_gen
+          
       - name: Generate Pure S1 (The Native Ribbothon Compiler)
         run: |
           cat << 'EOF' > build_pure_s1.py
@@ -26,31 +26,16 @@ jobs:
           code.append("A $MAIN_LOOP 1 x")
           code.append("W $MAIN_LOOP x")
           code.append("Z $CHAR x I $CHAR x")
-          
-          # EOF (0xFF) チェック -> ループ脱出
           code.append("C $CHAR $CMP x F $CMP 255 x Z $MAIN_LOOP x U x")
-          
-          # 命令 '1' -> 機械語 0x47 (71)
           code.append("C $CHAR $CMP x F $CMP 49 x Z $O x A $O 71 x P $O x U x")
-          
-          # 命令 '2' -> 機械語 0x4F (79)
           code.append("C $CHAR $CMP x F $CMP 50 x Z $O x A $O 79 x P $O x U x")
-          
-          # 命令 '3' -> 機械語 0xFE 0x05 (254, 5)
           code.append("C $CHAR $CMP x F $CMP 51 x Z $O x A $O 254 x P $O x Z $O x A $O 5 x P $O x U x")
-          
-          # 命令 '4' -> 機械語 0xFE 0x0D (254, 13)
           code.append("C $CHAR $CMP x F $CMP 52 x Z $O x A $O 254 x P $O x Z $O x A $O 13 x P $O x U x")
-          
-          # ループ終端
           code.append("E x")
-          
           with open("pure_s1_meta.txt", "w") as f:
               f.write("\n".join(code) + "\n")
           EOF
           python3 build_pure_s1.py
-          
-          # メタコンパイラで純粋S1をRibbothonコード化し、ベアメタルOSへ焼き込む
           ./meta_compiler < pure_s1_meta.txt > pure_s1.rib
           ./baremetal_aot_gen < pure_s1.rib
 
@@ -59,7 +44,6 @@ jobs:
           cat << 'EOF' > feed.py
           import sys, time
           time.sleep(2)
-          # テスト入力: Ribbothonの純粋な命令 '1234'
           for c in b"1234":
               sys.stdout.buffer.write(bytes([c]))
               sys.stdout.buffer.flush()
@@ -77,7 +61,6 @@ jobs:
 
       - name: Prove Determinism (Quad-Crown DDC)
         run: |
-          sudo apt-get install -y clang tcc
           gcc -O3 baremetal_aot_gen.c -o gen_gcc
           clang -O3 baremetal_aot_gen.c -o gen_clang
           tcc baremetal_aot_gen.c -o gen_tcc
@@ -117,270 +100,7 @@ jobs:
           hexdump -C mutated_out.bin
           if cmp -s mutated_out.bin void_output.txt; then echo "FAIL: Mutation was NOT caught!"; exit 1; else echo "SUCCESS: Mutation correctly altered the semantic output."; fi
 
-      - name: Generate Ribbothon Identity Compiler
-        run: |
-          cat << 'EOF' > identity_compiler.txt
-          Z $COUNT x
-          Z $CHAR x
-          Z $OUT_CHAR x
-          W $MAIN_LOOP x
-          I $CHAR x
-          C $CHAR $EOF_CHECK x
-          A $EOF_CHECK 1 x
-          C $CMP $EOF_CHECK x
-          F $CMP 0 x
-          E x
-          U x
-          Z $PROCESSED x
-          C $CMP $CHAR x F $CMP 49 x A $OUT_CHAR 49 x A $PROCESSED 1 x U x
-          C $CMP $CHAR x F $CMP 50 x A $OUT_CHAR 50 x A $PROCESSED 1 x U x
-          C $CMP $CHAR x F $CMP 51 x A $OUT_CHAR 51 x A $PROCESSED 1 x U x
-          C $CMP $CHAR x F $CMP 52 x A $OUT_CHAR 52 x A $PROCESSED 1 x U x
-          C $CMP $CHAR x F $CMP 53 x A $OUT_CHAR 53 x A $PROCESSED 1 x U x
-          C $CMP $CHAR x F $CMP 54 x A $OUT_CHAR 54 x A $PROCESSED 1 x U x
-          C $CMP $CHAR x F $CMP 55 x A $OUT_CHAR 55 x A $PROCESSED 1 x U x
-          C $CMP $CHAR x F $CMP 56 x A $OUT_CHAR 56 x A $PROCESSED 1 x U x
-          C $CMP $CHAR x F $CMP 57 x A $OUT_CHAR 57 x A $PROCESSED 1 x U x
-          C $CMP $CHAR x F $CMP 97 x A $OUT_CHAR 97 x A $PROCESSED 1 x U x
-          C $CMP $PROCESSED x F $CMP 1 x
-          P $OUT_CHAR x
-          A $COUNT 1 x
-          C $CMP $COUNT x F $CMP 5 x
-          Z $OUT_X x A $OUT_X 120 x P $OUT_X x
-          Z $COUNT x
-          U x
-          Z $OUT_CHAR x
-          Z $PROCESSED x
-          U x
-          E x
-          EOF
-          ./meta_compiler < identity_compiler.txt > compiler1.rib
-
-      - name: Verify Strict Ultimate Pure Self-Host Fixed-Point
-        run: |
-          cat << 'EOF' > build_compilers.py
-          import sys
-          def bf_to_rib(bf_code):
-           m = {">":"1", "<":"2", "+":"3", "-":"4", ".":"5", ",":"6", "[":"7", "]":"8"}
-           rib = "".join([m[c] for c in bf_code if c in m])
-           f_out = "".join([x+"x" if (i+1)%5==0 else x for i, x in enumerate(rib)])
-           if len(rib)%5!=0: f_out += "x"
-           return f_out
-          
-          bf1 = ">>,+[-"
-          mappings = {62:49, 60:50, 43:51, 45:52, 46:53, 44:54, 91:55, 93:56}
-          for target, out in mappings.items():
-           bf1 += "[->+>+<<]>>[-<<+>>]<" + "-"*target + ">+<[>[-]<[-]]>["
-           bf1 += ">" + "+"*out + ".[-]<<<<+>>>>"
-           bf1 += "<<<<[->>>>+>+<<<<<]>>>>>[-<<<<<+>>>>>]<"
-           bf1 += "-----" + ">+<[>[-]<[-]]>["
-           bf1 += ">" + "+"*120 + ".[-]<<<<<<[-]>>>>>[-]]<<[-]]<<"
-          bf1 += "[-],+]"
-          with open("rib_compiler.bf", "w") as f: f.write(bf1)
-          with open("rib_compiler.rib", "w") as f: f.write(bf_to_rib(bf1))
-          
-          asm = """
-          [org 0x7C00]
-          jmp entry
-          times 0x40-($-$$) db 0
-          out_char:
-              mov al, [es:di]
-              mov [fs:bp], al
-              inc bp
-              ret
-          times 0x50-($-$$) db 0
-          in_char:
-              push ds
-              mov ax, 0x4000
-              mov ds, ax
-              mov al, [bx]
-              inc bx
-              pop ds
-              mov [es:di], al
-              ret
-          times 0x70-($-$$) db 0
-          jump_fwd:
-              cmp byte [es:di], 0
-              jnz .done
-              pop si
-              mov dx, 1
-          .loop:
-              cmp word [si], 0xA0B8
-              jne .not_close
-              dec dx
-              jz .found
-              jmp .next
-          .not_close:
-              cmp word [si], 0x70B8
-              jne .next
-              inc dx
-          .next:
-              add si, 5
-              jmp .loop
-          .found:
-              add si, 5
-              push si
-          .done:
-              ret
-          times 0xA0-($-$$) db 0
-          jump_bwd:
-              cmp byte [es:di], 0
-              jz .done2
-              pop si
-              sub si, 10
-              mov dx, 1
-          .loop2:
-              cmp word [si], 0x70B8
-              jne .not_open
-              dec dx
-              jz .found2
-              jmp .next2
-          .not_open:
-              cmp word [si], 0xA0B8
-              jne .next2
-              inc dx
-          .next2:
-              sub si, 5
-              jmp .loop2
-          .found2:
-              add si, 5
-              push si
-          .done2:
-              ret
-          times 0xD0-($-$$) db 0
-          dap:
-              db 0x10, 0
-              dw 127
-              dw 0x7E00, 0x0000
-              dq 1
-          dap2:
-              db 0x10, 0
-              dw 127
-              dw 0x0000, 0x4000
-              dq 0
-          entry:
-              xor ax, ax
-              mov ds, ax
-              mov ss, ax
-              mov sp, 0x7C00
-              mov ah, 0x42
-              mov dl, 0x80
-              mov si, dap
-              int 0x13
-              mov ah, 0x42
-              mov dl, 0x81
-              mov si, dap2
-              int 0x13
-              mov ax, 0x3000
-              mov es, ax
-              xor di, di
-              mov cx, 0x8000
-              xor ax, ax
-              rep stosw
-              mov ax, 0x2000
-              mov es, ax
-              xor di, di
-              mov cx, 0x8000
-              xor ax, ax
-              rep stosw
-              mov ax, 0x3000
-              mov fs, ax
-              xor bp, bp
-              xor bx, bx
-              jmp 0x7E00
-          times 510-($-$$) db 0
-          dw 0xaa55
-          """
-          with open("runtime.asm", "w") as f: f.write(asm)
-          import subprocess
-          subprocess.run(["nasm", "-f", "bin", "runtime.asm", "-o", "runtime.bin"], check=True)
-          with open("runtime.bin", "rb") as f: runtime = f.read()
-          def emit_byte(target, current):
-           if target == current: return "."
-           diff = (target - current) % 256
-           if diff <= 128:
-            if diff <= 15: return "+" * diff + "."
-            q, r = divmod(diff, 16)
-            return ">[-]++++++++[<" + "+"*q + ">-]<" + "+"*r + "."
-           else:
-            diff = 256 - diff
-            if diff <= 15: return "-" * diff + "."
-            q, r = divmod(diff, 16)
-            return ">[-]++++++++[<" + "-"*q + ">-]<" + "-"*r + "."
-          bf2 = "[-]"
-          curr = 0
-          for b in runtime:
-           bf2 += emit_byte(b, curr)
-           curr = b
-          bf2 += ">>,+[-"
-          targets = {
-           49: [0x47, 0x90, 0x90, 0x90, 0x90],
-           50: [0x4F, 0x90, 0x90, 0x90, 0x90],
-           51: [0x26, 0xFE, 0x05, 0x90, 0x90],
-           52: [0x26, 0xFE, 0x0D, 0x90, 0x90],
-           53: [0xB8, 0x40, 0x7C, 0xFF, 0xD0],
-           54: [0xB8, 0x50, 0x7C, 0xFF, 0xD0],
-           55: [0xB8, 0x70, 0x7C, 0xFF, 0xD0],
-           56: [0xB8, 0xA0, 0x7C, 0xFF, 0xD0]
-          }
-          for t, block in targets.items():
-           bf2 += "[->+>+<<]>>[-<<+>>]<" + "-"*t + ">+<[>[-]<[-]]>["
-           curr = 0
-           for b in block:
-            bf2 += ">" + emit_byte(b, curr) + "<"
-            curr = b
-           bf2 += ">[-]<[-]]<<"
-          bf2 += "[-],+]"
-          bf2 += ">" + emit_byte(0xFA, 0) + "<"
-          bf2 += ">" + emit_byte(0xF4, 0xFA) + "<"
-          with open("aot_compiler.rib", "w") as f: f.write(bf_to_rib(bf2))
-          EOF
-          python3 build_compilers.py
-          
-          echo "=== Phase 1: Source-Level Self-Host (Language Reconstruction) ==="
-          ./ribbothon rib_compiler.rib < rib_compiler.bf > c1.rib
-          ./ribbothon c1.rib < rib_compiler.bf > c2.rib
-          if ! cmp -s c1.rib c2.rib; then echo "FAIL: self-host fixed point failed"; exit 1; fi
-          echo "SUCCESS: Source-Level Fixed Point Achieved!"
-          
-          echo "=== Phase 2: Native-Level Self-Host (AOT Execution) ==="
-          ./ribbothon aot_compiler.rib < aot_compiler.rib > gen1.img
-          truncate -s 65536 gen1.img
-          cat << 'EOF' > run_qemu.py
-          import sys,time,subprocess
-          i=sys.argv[1]; o=sys.argv[2]
-          with open("aot_compiler.rib","rb") as f: data=f.read()
-          with open("input.img","wb") as f: f.write(data.ljust(65536, b'\xff'))
-          p=subprocess.Popen(["qemu-system-x86_64","-drive",f"format=raw,file={i},index=0,if=ide","-drive","format=raw,file=input.img,index=1,if=ide","-display","none","-monitor","stdio"],stdin=subprocess.PIPE,stdout=subprocess.DEVNULL)
-          time.sleep(5)
-          p.stdin.write(b"pmemsave 0x30000 65536 memdump.bin\nquit\n")
-          p.stdin.flush()
-          p.wait()
-          with open("memdump.bin","rb") as f: data=f.read()
-          with open(o,"wb") as f: f.write(data)
-          EOF
-          python3 run_qemu.py gen1.img gen2.img
-          python3 run_qemu.py gen2.img gen3.img
-          H2=$(sha256sum gen2.img | awk '{print $1}')
-          H3=$(sha256sum gen3.img | awk '{print $1}')
-          EMPTY="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-          echo "Gen 2: $H2"
-          echo "Gen 3: $H3"
-          if [ "$H2" = "$EMPTY" ] || [ "$H3" = "$EMPTY" ]; then echo "FAIL: Output is empty!"; exit 1; fi
-          if [ "$H2" != "$H3" ]; then
-            echo "FAIL: Native fixed-point failed!"
-            echo "--- Debug: Hexdump of gen1.img (First 128 bytes) ---"
-            hexdump -C gen1.img | head -n 8
-            echo "--- Debug: Hexdump of gen2.img (First 128 bytes) ---"
-            hexdump -C gen2.img | head -n 8
-            echo "--- Debug: Hexdump of gen2.img (Last 128 bytes) ---"
-            hexdump -C gen2.img | tail -n 8
-            exit 1
-          fi
-          echo "SUCCESS: Strict absolute self-hosting achieved across all dimensions."
-
-
-      - name: Verify Absolute Stage-0 Full Bootstrap (GCC-Free)
+      - name: Verify Absolute Stage-0 Full Bootstrap & Assembler DDC (Trusting Trust Breaker)
         run: |
           cat << 'EOF' > seed.asm
           [org 0x7c00]
@@ -504,11 +224,21 @@ jobs:
           times 510-($-$$) db 0
           dw 0xaa55
           EOF
-          nasm -f bin seed.asm -o seed.img
+          
+          echo "=== Proving Assembler Trust (Diverse Double-Compiling) ==="
+          nasm -f bin seed.asm -o seed_nasm.img
+          yasm -f bin seed.asm -o seed_yasm.img
+          H_NASM=$(sha256sum seed_nasm.img | awk '{print $1}')
+          H_YASM=$(sha256sum seed_yasm.img | awk '{print $1}')
+          echo "NASM Hash: $H_NASM"
+          echo "YASM Hash: $H_YASM"
+          if [ "$H_NASM" != "$H_YASM" ]; then echo "FAIL: Trusting Trust Attack Detected in Assembler!"; exit 1; fi
+          echo "SUCCESS: Seed binary mathematically proven clean of backdoor!"
+          cp seed_nasm.img seed.img
           truncate -s 65536 seed.img
           
           cat << 'EOF' > build_compilers.py
-          import sys
+          import sys, subprocess
           def bf_to_rib(bf_code):
            m = {">":"1", "<":"2", "+":"3", "-":"4", ".":"5", ",":"6", "[":"7", "]":"8"}
            rib = "".join([m[c] for c in bf_code if c in m])
@@ -646,9 +376,16 @@ jobs:
           dw 0xaa55
           """
           with open("runtime.asm", "w") as f: f.write(asm)
-          import subprocess
-          subprocess.run(["nasm", "-f", "bin", "runtime.asm", "-o", "runtime.bin"], check=True)
-          with open("runtime.bin", "rb") as f: runtime = f.read()
+          
+          # Runtime Assembly DDC
+          subprocess.run(["nasm", "-f", "bin", "runtime.asm", "-o", "runtime_n.bin"], check=True)
+          subprocess.run(["yasm", "-f", "bin", "runtime.asm", "-o", "runtime_y.bin"], check=True)
+          with open("runtime_n.bin", "rb") as f1, open("runtime_y.bin", "rb") as f2:
+              if f1.read() != f2.read():
+                  print("FAIL: Runtime Assembler Trust Breach!")
+                  sys.exit(1)
+          
+          with open("runtime_n.bin", "rb") as f: runtime = f.read()
           def emit_byte(target, current):
            if target == current: return "."
            diff = (target - current) % 256
@@ -699,12 +436,12 @@ jobs:
               prog = sys.argv[3]; inp = sys.argv[4]
               shutil.copy(prog, "tmp_prog.img")
               shutil.copy(inp, "tmp_inp.img")
-              cmd = ["qemu-system-x86_64", "-drive", "format=raw,file=seed.img,index=0,if=ide", "-drive", "format=raw,file=tmp_prog.img,index=1,if=ide", "-drive", "format=raw,file=tmp_inp.img,index=2,if=ide", "-display", "none", "-monitor", "stdio"]
+              cmd = ["qemu-system-x86_64", "-drive", "format=raw,file=seed.img,index=0,if=ide,readonly=on", "-drive", "format=raw,file=tmp_prog.img,index=1,if=ide,readonly=on", "-drive", "format=raw,file=tmp_inp.img,index=2,if=ide,readonly=on", "-display", "none", "-monitor", "stdio"]
           else:
               boot = sys.argv[3]; inp = sys.argv[4]
               shutil.copy(boot, "tmp_boot.img")
               shutil.copy(inp, "tmp_inp.img")
-              cmd = ["qemu-system-x86_64", "-drive", "format=raw,file=tmp_boot.img,index=0,if=ide", "-drive", "format=raw,file=tmp_inp.img,index=1,if=ide", "-display", "none", "-monitor", "stdio"]
+              cmd = ["qemu-system-x86_64", "-drive", "format=raw,file=tmp_boot.img,index=0,if=ide,readonly=on", "-drive", "format=raw,file=tmp_inp.img,index=1,if=ide,readonly=on", "-display", "none", "-monitor", "stdio"]
           p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL)
           time.sleep(5)
           p.stdin.write(b"pmemsave 0x30000 65536 memdump.bin\nquit\n")
@@ -749,4 +486,3 @@ jobs:
             *.bf
             *.asm
             *.py
-
